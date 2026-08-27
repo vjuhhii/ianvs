@@ -25,7 +25,12 @@ import types
 import pytest
 
 from core.common import device as device_module
-from core.common.device import device_profile, supports_bf16
+from core.common.device import (
+    check_min_capability,
+    device_profile,
+    parse_capability,
+    supports_bf16,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -135,3 +140,61 @@ def test_no_warning_when_bf16_is_native(install_torch, caplog):
         assert supports_bf16() is True
 
     assert [r for r in caplog.records if r.levelname == "WARNING"] == []
+
+
+class TestParseCapability:
+    """Normalising what a yaml author is likely to write."""
+
+    @pytest.mark.parametrize(
+        "value, expected",
+        [
+            ("8.0", (8, 0)),
+            ("7.5", (7, 5)),
+            ("8.6", (8, 6)),
+            (8.0, (8, 0)),
+            (8, (8, 0)),
+            ("  8.0  ", (8, 0)),
+        ],
+    )
+    def test_accepts_the_usual_spellings(self, value, expected):
+        assert parse_capability(value) == expected
+
+    @pytest.mark.parametrize("value", ["eight", "8.0.1", "", "8.x", "-8.0"])
+    def test_rejects_anything_else_with_an_actionable_message(self, value):
+        with pytest.raises(ValueError, match="min_compute_capability"):
+            parse_capability(value)
+
+
+class TestCheckMinCapability:
+    """A declared floor is enforced only where it can be."""
+
+    def test_no_declared_floor_is_not_an_error(self, install_torch):
+        install_torch(fake_torch(capability=(6, 1)))
+
+        check_min_capability(None)
+
+    def test_device_below_the_floor_is_refused(self, install_torch):
+        install_torch(fake_torch(capability=(6, 1), name="NVIDIA GeForce GTX 1080"))
+
+        with pytest.raises(RuntimeError) as excinfo:
+            check_min_capability((8, 0))
+
+        message = str(excinfo.value)
+        assert "8.0" in message
+        assert "6.1" in message
+        assert "GTX 1080" in message
+
+    @pytest.mark.parametrize("capability", [(8, 0), (8, 6), (9, 0)])
+    def test_device_meeting_the_floor_passes(self, install_torch, capability):
+        install_torch(fake_torch(capability=capability))
+
+        check_min_capability((8, 0))
+
+    def test_cpu_run_is_reported_but_allowed(self, install_torch, caplog):
+        """`use_gpu: false` asks for cpu; a declared floor must not veto that."""
+        install_torch(fake_torch(available=False))
+
+        with caplog.at_level("WARNING"):
+            check_min_capability((8, 0))
+
+        assert any("min_compute_capability" in r.getMessage() for r in caplog.records)

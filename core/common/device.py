@@ -92,6 +92,75 @@ def _cpu_profile():
     }
 
 
+def parse_capability(value):
+    """Normalise a declared compute capability into a (major, minor) pair.
+
+    Accepts what a yaml author is likely to write: "8.0", "8.6", 8.0 or 8.
+
+    Parameters
+    ---------
+    value: str or float or int
+        the declared capability.
+
+    Returns
+    ------
+    tuple of (int, int)
+
+    """
+    text = str(value).strip()
+    parts = text.split(".")
+
+    well_formed = (
+        1 <= len(parts) <= 2
+        and parts[0].isdigit()
+        and (len(parts) == 1 or parts[1] == "" or parts[1].isdigit())
+    )
+    if not well_formed:
+        raise ValueError(
+            f"testenv min_compute_capability(value={value}) must look like "
+            f'"8.0" or "7.5".'
+        )
+
+    major = int(parts[0])
+    minor = int(parts[1]) if len(parts) == 2 and parts[1] != "" else 0
+    return (major, minor)
+
+
+def check_min_capability(required):
+    """Refuse a run whose device cannot meet a declared capability floor.
+
+    Only a cuda device below the floor is an error. A run resolving to cpu is
+    reported and allowed to continue, because an example may legitimately be
+    exercised on cpu — `use_gpu: false` asks for exactly that.
+
+    Parameters
+    ---------
+    required: tuple of (int, int) or None
+        the declared floor; None means the example did not declare one.
+
+    """
+    if required is None:
+        return
+
+    profile = device_profile()
+
+    if profile["device"] != "cuda":
+        LOGGER.warning(
+            "testenv declares min_compute_capability %d.%d but no cuda device was "
+            "resolved; continuing on cpu.",
+            required[0], required[1],
+        )
+        return
+
+    if profile["capability"] < required:
+        major, minor = profile["capability"]
+        raise RuntimeError(
+            f"testenv requires compute capability {required[0]}.{required[1]}, but "
+            f"{profile['name']} is {major}.{minor}. Results from this device would not "
+            f"be comparable with the declared configuration."
+        )
+
+
 def supports_bf16():
     """Report whether bfloat16 executes natively on the resolved device.
 
