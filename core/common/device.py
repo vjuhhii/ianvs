@@ -33,8 +33,6 @@ from core.common.log import LOGGER
 BF16_MIN_MAJOR = 8
 """First CUDA compute capability major version with native bfloat16 (Ampere)."""
 
-_EMULATION_REPORTED = False
-
 
 def device_profile():
     """Report the resolved compute device and what it can natively execute.
@@ -169,28 +167,27 @@ def supports_bf16():
     `including_emulation=True` and so answers True on hardware with no native
     bfloat16, which is the trap this module exists to avoid.
 
-    Warns once per process when the answer is False on a CUDA device, because
-    that is the case where a caller would otherwise have selected an emulated
-    dtype and reported the resulting timings as a measurement.
+    Warns every time the answer is False on a CUDA device. Deliberately not
+    suppressed after the first occurrence: a benchmarking job runs its test cases
+    in one process, so a once-per-process warning would announce the first
+    affected measurement and silently pass over the rest — the same defect this
+    module exists to remove. One warning per affected model load is proportionate,
+    since each corresponds to a measurement the caveat applies to.
 
     Returns
     ------
     bool
 
     """
-    global _EMULATION_REPORTED  # pylint: disable=global-statement
-
     profile = device_profile()
     if profile["device"] == "cuda" and not profile["bf16_native"]:
-        if not _EMULATION_REPORTED:
-            _EMULATION_REPORTED = True
-            major, minor = profile["capability"]
-            LOGGER.warning(
-                "%s is compute capability %d.%d; bfloat16 has no native path below "
-                "%d.0 and would be emulated. Falling back to float32. Timings "
-                "collected in bfloat16 on this device would not describe the hardware.",
-                profile["name"], major, minor, BF16_MIN_MAJOR,
-            )
+        major, minor = profile["capability"]
+        LOGGER.warning(
+            "%s is compute capability %d.%d; bfloat16 has no native path below "
+            "%d.0 and would be emulated. Falling back to float32. Timings "
+            "collected in bfloat16 on this device would not describe the hardware.",
+            profile["name"], major, minor, BF16_MIN_MAJOR,
+        )
         return False
 
     return profile["bf16_native"]

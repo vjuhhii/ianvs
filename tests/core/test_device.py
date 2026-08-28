@@ -24,19 +24,12 @@ import types
 
 import pytest
 
-from core.common import device as device_module
 from core.common.device import (
     check_min_capability,
     device_profile,
     parse_capability,
     supports_bf16,
 )
-
-
-@pytest.fixture(autouse=True)
-def reset_emulation_warning(monkeypatch):
-    """The warning fires once per process; keep cases independent of order."""
-    monkeypatch.setattr(device_module, "_EMULATION_REPORTED", False)
 
 
 def fake_torch(available=True, capability=(8, 6), name="Fake GPU", memory_gb=16):
@@ -119,18 +112,24 @@ def test_supports_bf16_tracks_the_profile(install_torch):
     assert supports_bf16() is True
 
 
-def test_emulation_is_reported_once_on_a_pre_ampere_device(install_torch, caplog):
-    """Silence is the defect this module exists to remove, so the fallback is logged."""
+def test_emulation_is_reported_on_every_affected_model_load(install_torch, caplog):
+    """Silence is the defect this module exists to remove, so the fallback is logged.
+
+    Every occurrence, not just the first. A benchmarking job runs its test cases in
+    one process, so suppressing repeats would announce the first affected
+    measurement and pass silently over the rest. Reported in review of #957.
+    """
     install_torch(fake_torch(capability=(6, 1), name="NVIDIA GeForce GTX 1080"))
 
     with caplog.at_level("WARNING"):
         assert supports_bf16() is False
         assert supports_bf16() is False
+        assert supports_bf16() is False
 
     warnings = [r for r in caplog.records if r.levelname == "WARNING"]
-    assert len(warnings) == 1
-    assert "6.1" in warnings[0].getMessage()
-    assert "GTX 1080" in warnings[0].getMessage()
+    assert len(warnings) == 3
+    assert all("6.1" in w.getMessage() for w in warnings)
+    assert all("GTX 1080" in w.getMessage() for w in warnings)
 
 
 def test_no_warning_when_bf16_is_native(install_torch, caplog):
