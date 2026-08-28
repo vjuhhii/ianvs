@@ -111,3 +111,28 @@ def test_set_gpu_visibility_maps_each_state(monkeypatch, use_gpu, expected):
     ParadigmBase._set_gpu_visibility(use_gpu)  # pylint: disable=protected-access
 
     assert os.environ["CUDA_VISIBLE_DEVICES"] == expected
+
+
+def test_each_construction_applies_the_setting_rather_than_inheriting_it(tmp_path, monkeypatch):
+    """A job builds one paradigm per algorithm, all from a single TestEnv.
+
+    `TestCaseController.build_testcases()` passes the same `test_env` object to
+    every `TestCase`, so cases in one run share a `use_gpu` value. What matters
+    across constructions is therefore that each one applies that value itself
+    instead of trusting whatever the previous construction left in the
+    environment. Raised in review of #890.
+    """
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", MULTI_GPU_HOST)
+    assert build_paradigm(tmp_path, use_gpu=False) == "-1"
+
+    # something outside the paradigm restores the host's devices
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", MULTI_GPU_HOST)
+
+    assert build_paradigm(tmp_path, use_gpu=False) == "-1"
+
+
+def test_repeated_construction_is_stable_for_the_gpu_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", MULTI_GPU_HOST)
+
+    assert build_paradigm(tmp_path, use_gpu=True) == "0"
+    assert build_paradigm(tmp_path, use_gpu=True) == "0"
